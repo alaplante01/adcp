@@ -1,5 +1,98 @@
 # Changelog
 
+## 3.0.0-rc.4
+
+### Major Changes
+
+- 95f1174: Restructure media buy lifecycle statuses and add compliance testing capability declaration.
+
+  **MediaBuyStatus enum changes (#2026)**
+
+  - `pending_activation` removed — replaced by two distinct statuses with clearer semantics
+  - `pending_creatives` added — media buy is approved but has no creatives assigned; buyer must call `sync_creatives` before the buy can serve
+  - `pending_start` added — media buy is ready to serve and waiting for its flight date to begin
+  - Lifecycle: `create_media_buy` → `pending_creatives` → `pending_start` → `active` (see [migration guide](/docs/reference/migration/prerelease-upgrades) for full state machine)
+  - Rejection valid from `pending_creatives` or `pending_start` only (not `active`)
+  - Legacy alias: `pending` continues to map to `pending_start`
+
+  **Compliance testing protocol (#2030)**
+
+  - `compliance_testing` added to `supported_protocols` enum in `get_adcp_capabilities`
+  - New `compliance_testing` capability section declares which `comply_test_controller` scenarios the agent supports
+  - Agents that implement `comply_test_controller` should declare `compliance_testing` in their capabilities
+
+  **Storyboard validation fixes (#2026)**
+
+  - `results[0].action` → `creatives[0].action` (sync_creatives response)
+  - `media_buys` → `media_buy_deliveries` (get_media_buy_delivery response)
+  - `renders[0].url` → `renders[0].preview_url` (preview_creative response)
+  - Added missing `value:` to 7 `field_value` validation checks
+  - Added `value` property to storyboard validation schema
+
+  **Migration required for `pending_activation` consumers:**
+
+  - Replace `pending_activation` with `pending_start` in status filters and comparisons
+  - Add `pending_creatives` to status filter arrays where you filter for non-active buys
+  - Update state machine logic: `pending_creatives` → `pending_start` transition happens when creatives are assigned
+
+### Minor Changes
+
+- 5e9a748: Add generic `agents` array to brand.json for brand and house objects. Replaces the pattern of adding named agent fields (`brand_agent`, `rights_agent`) with a typed array that supports brand, rights, measurement, governance, creative, buying, and signals agent types. Deprecates `brand_agent` and `rights_agent` fields.
+- a497d02: Add border_radius, elevation, and spacing definitions to visual_guidelines in brand.json schema. Add extended color roles (heading, body, label, border, divider, surface_1, surface_2) to the colors definition. These are the visual tokens creative agents most often guess wrong when not specified.
+- 106831c: Add broadcast TV, audio, and DOOH forecast support: `measurement_source` field on DeliveryForecast to declare which third-party measurement provider produced the forecast numbers (includes global providers: nielsen, videoamp, comscore, geopath, barb, agf, oztam, kantar, barc, route, rajar, triton); `measured_impressions` metric for delivery as counted by the measurement_source provider (independent of guarantee — works with both guaranteed and modeled forecasts); `downloads` metric for podcast advertising; `plays` metric for DOOH raw play counts before impression multiplier; `package` forecast range unit for sellers who offer distinct inventory packages rather than spend curves; `label` field on ForecastPoint to identify packages by name; relax `mid` requirement on ForecastRange to accept either `mid` or both `low`+`high`.
+- cf4e9ee: Extend brand.json fonts schema with structured font definitions. Each font role (primary, secondary, etc.) now accepts either a CSS font-family string or a structured object with `family`, `files` (with `weight`, `weight_range` for variable fonts, and `style`), `opentype_features` (e.g., ss01, tnum), and `fallbacks` for multi-script coverage. This enables creative agents to resolve and render fonts reliably while remaining backward compatible with simple string values.
+- ac0c3e3: Storyboard-first testing flow: fix creative agent rejecting adcp_major_version, deprecate platform_type gate, add Addie storyboard tools (recommend, detail, run, step), add applicable-storyboards API endpoint
+- 7736865: Add per-request version declaration and VERSION_UNSUPPORTED error code
+
+  **Version negotiation:**
+
+  - `adcp_major_version` optional integer field on all AdCP request schemas lets buyers declare which major version their payloads conform to
+  - Sellers validate against their `major_versions` and return `VERSION_UNSUPPORTED` if out of range
+  - When omitted, sellers assume their highest supported version
+
+  **Error codes:**
+
+  - `VERSION_UNSUPPORTED` — declared major version not supported by seller. Recovery: correctable.
+
+  **Documentation:**
+
+  - Version negotiation section in versioning reference
+  - Version negotiation flow and seller behavior in get_adcp_capabilities docs
+
+- e7d742f: Split `pending_activation` media buy status into `pending_creatives` and `pending_start` for finer-grained lifecycle tracking. Replace InMemoryTaskStore with PostgresTaskStore for distributed MCP task handling. Refactor comply test controller to use SDK TestControllerStore pattern.
+
+### Patch Changes
+
+- 0d5d682: Guard against missing brand_domain_aliases table in sweep job and undefined domain in WorkOS verification_failed webhook
+- f6a1fe2: Fix digest archive route ordering to prevent param collision
+- 985a77b: Delegate comply() to @adcp/client — server compliance module reduced from ~500 lines to re-exports + DB adapter
+- 3ff7397: Fix digest content hierarchy, dedup articles, inclusive tone
+- a8e4d71: Fix article dedup by root domain and WG summaries showing descriptions
+- 25de6cf: Fix digest editor note newlines, paid members only, biweekly lookback, legacy draft handling
+- 4fab693: Improve error diagnostics and migrate test runner from Jest to Vitest
+- f172af6: Add sync_governance to schema index for client discoverability.
+- 8da00d7: Fix SQL parameter indexing bug in send_payment_request and improve billing lookup key error messages
+- 70740e8: Add missing route handler for /dashboard-membership to fix "Cannot GET" errors
+- 5a977c3: Add media_buy_generative_seller storyboard for sellers that generate creatives from briefs at buy time
+- d375430: Event recaps: TipTap editor, public display with YouTube embed, newsletter integration, Slack nudges, member hub events.
+- 33b4f67: Luma reverse sync: auto-import events from Luma calendar, Zoom attendee CSV import, webhook handling for all Luma actions.
+- afe43ee: Fix migration guide missing comply-blocking requirements
+
+  - Add `buying_mode` as a required field on all `get_products` requests to the breaking changes table
+  - Add warning callout for `buying_mode` comply-blocking requirement
+  - Fix Accounts protocol row: protocol is required for all buyers, `require_operator_auth` determines which task (`sync_accounts` vs `list_accounts`) to call
+
+- 62f91de: Newsletter admin editors, email routing fix, and production readiness
+- 2353f4d: Wire existing OAuth flow to agent dashboard UI. Members can now authorize agents via OAuth instead of manually pasting tokens. Adds auth-status endpoint and OAuth-first connect form.
+- f18148e: Redesign organization dashboard: split into sidebar-navigated pages (Overview, Team, Agents), restore journey stepper with product-usage milestones, add upgrade teasers for all tiers with price reframing, wire team certification summary, show health score weights, and fix nonmember 403 error.
+- 6f45f15: Personalized action nudge in newsletter based on recipient profile
+- 8e8f604: Let users select a primary email from linked aliases via PUT /api/me/linked-emails/primary.
+- 26816c5: Add Regenerate button to digest admin editor
+- fd1efc4: Storyboard UX: short-circuit comply() when products fail, inline agent connect form, filter picker by capabilities, OAuth auth fallback, generative creative storyboard
+- 3c23472: Per-item errors in sync_catalogs, sync_creatives, and sync_event_sources responses now reference error.json instead of bare strings, matching the operation-level errors pattern.
+- 4095926: Add The Build admin editor and consolidate newsletter sidebar
+- 9415ae3: Split newsletter into This Edition + Industry Intel sections
+
 ## 3.0.0-rc.3
 
 ### Major Changes
